@@ -83,19 +83,8 @@
                 </div>
 
                 <div class="control">
-                    <label for="fit-input">Fit mode
-                        <span class="control__hint">How frames fill the canvas</span>
-                    </label>
-                    <select id="fit-input">
-                        <option value="cover" selected>Fill (crop edges)</option>
-                        <option value="contain">Contain (letterbox)</option>
-                        <option value="stretch">Stretch (distort)</option>
-                    </select>
-                </div>
-
-                <div class="control" id="bg-control">
                     <label for="bg-input">Background
-                        <span class="control__hint">Used by Contain mode</span>
+                        <span class="control__hint">Shown where a frame leaves empty space</span>
                     </label>
                     <input type="color" id="bg-input" value="#ffffff">
                 </div>
@@ -186,6 +175,7 @@
     </div>
 
     <script src="vendor/gif.js"></script>
+    <script src="vendor/gif.worker.embed.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

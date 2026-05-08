@@ -1,8 +1,16 @@
 (() => {
     'use strict';
 
-    const GIF_WORKER_URL = 'vendor/gif.worker.js';
     const MAX_OUTPUT = 1024;
+
+    // Build the worker URL from the embedded source so generation works under
+    // both http(s):// and file:// (Worker construction from a file:// URL is
+    // blocked because that origin is treated as `null`; a blob URL avoids it).
+    const GIF_WORKER_URL = (() => {
+        const src = window.GIF_WORKER_SOURCE;
+        if (typeof src !== 'string' || !src.length) return null;
+        return URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    })();
 
     const fileInput = document.getElementById('file-input');
     const dropZone = document.getElementById('drop-zone');
@@ -15,9 +23,7 @@
     const qualityInput = document.getElementById('quality-input');
     const qualityOutput = document.getElementById('quality-output');
     const loopInput = document.getElementById('loop-input');
-    const fitInput = document.getElementById('fit-input');
     const bgInput = document.getElementById('bg-input');
-    const bgControl = document.getElementById('bg-control');
     const sizeInput = document.getElementById('size-input');
     const customSizeControl = document.getElementById('custom-size-control');
     const customW = document.getElementById('custom-w');
@@ -47,16 +53,17 @@
      * @property {File} file
      * @property {string} url
      * @property {HTMLImageElement} image
-     * @property {{scale:number, dx:number, dy:number}|null} transform
+     * @property {{srcX:number, srcY:number, srcW:number, srcH:number}} crop
+     * @property {boolean} edited - true if user manually adjusted the crop
      */
     /** @type {Frame[]} */
     let frames = [];
     let frameIdCounter = 0;
     let lastBlobUrl = null;
+    let lastOutputAspect = null;
 
-    // Editor state
     let editingFrame = null;
-    let editorState = null; // { canvasW, canvasH, baseScale, scale, dx, dy, dragging, lastX, lastY, displayScale }
+    let editorState = null;
 
     // ----- UI bindings -----
 
@@ -64,15 +71,16 @@
         qualityOutput.textContent = qualityInput.value;
     });
 
-    fitInput.addEventListener('change', () => {
-        bgControl.style.display = fitInput.value === 'contain' ? '' : 'none';
-    });
-    // initialize bg control visibility
-    bgControl.style.display = fitInput.value === 'contain' ? '' : 'none';
-
     sizeInput.addEventListener('change', () => {
         customSizeControl.hidden = sizeInput.value !== 'custom';
+        onOutputSizeChanged();
     });
+
+    [customW, customH].forEach((el) => {
+        el.addEventListener('change', onOutputSizeChanged);
+    });
+
+    bgInput.addEventListener('change', renderFrames);
 
     fileInput.addEventListener('change', (e) => {
         addFiles(e.target.files);
@@ -108,6 +116,135 @@
 
     generateBtn.addEventListener('click', generate);
 
+    // ----- Output sizing -----
+
+    function computeOutputSize() {
+        const mode = sizeInput.value;
+        let width, height;
+
+        if (mode === 'custom') {
+            width = clamp(parseInt(customW.value, 10) || 600, 32, 2048);
+            height = clamp(parseInt(customH.value, 10) || 600, 32, 2048);
+            return makeEven(width, height);
+        }
+
+        let maxW = 0, maxH = 0;
+        for (const f of frames) {
+            if (f.image.naturalWidth > maxW) maxW = f.image.naturalWidth;
+            if (f.image.naturalHeight > maxH) maxH = f.image.naturalHeight;
+        }
+        if (!maxW || !maxH) { maxW = 600; maxH = 600; }
+
+        if (mode === 'auto') {
+            width = maxW; height = maxH;
+        } else if (mode === 'square') {
+            const side = Math.max(maxW, maxH);
+            width = side; height = side;
+        } else if (mode === 'landscape') {
+            const base = Math.max(maxW, maxH);
+            width = base;
+            height = Math.round(base * 9 / 16);
+        } else if (mode === 'portrait') {
+            const base = Math.max(maxW, maxH);
+            width = Math.round(base * 9 / 16);
+            height = base;
+        }
+
+        if (width > MAX_OUTPUT || height > MAX_OUTPUT) {
+            const scale = MAX_OUTPUT / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+        }
+        return makeEven(width, height);
+    }
+
+    function makeEven(w, h) {
+        return {
+            width: Math.max(2, w - (w % 2)),
+            height: Math.max(2, h - (h % 2)),
+        };
+    }
+
+    function onOutputSizeChanged() {
+        const { width, height } = computeOutputSize();
+        const newAspect = width / height;
+        if (lastOutputAspect && Math.abs(newAspect - lastOutputAspect) > 0.001) {
+            // Adapt every existing crop to the new aspect (preserve center).
+            for (const f of frames) {
+                f.crop = adjustCropAspect(f.crop, newAspect);
+            }
+        }
+        lastOutputAspect = newAspect;
+        renderFrames();
+    }
+
+    // ----- Crop helpers (source-rect representation) -----
+
+    function defaultCoverCrop(image, canvasAspect) {
+        const iw = image.naturalWidth;
+        const ih = image.naturalHeight;
+        const iAspect = iw / ih;
+        let srcW, srcH;
+        if (iAspect > canvasAspect) {
+            srcH = ih;
+            srcW = srcH * canvasAspect;
+        } else {
+            srcW = iw;
+            srcH = srcW / canvasAspect;
+        }
+        return {
+            srcX: (iw - srcW) / 2,
+            srcY: (ih - srcH) / 2,
+            srcW,
+            srcH,
+        };
+    }
+
+    function adjustCropAspect(crop, newAspect) {
+        const cx = crop.srcX + crop.srcW / 2;
+        const cy = crop.srcY + crop.srcH / 2;
+        const oldAspect = crop.srcW / crop.srcH;
+        let srcW = crop.srcW;
+        let srcH = crop.srcH;
+        if (newAspect > oldAspect) {
+            srcH = srcW / newAspect;
+        } else {
+            srcW = srcH * newAspect;
+        }
+        return {
+            srcX: cx - srcW / 2,
+            srcY: cy - srcH / 2,
+            srcW,
+            srcH,
+        };
+    }
+
+    function drawCrop(ctx, image, crop, canvasW, canvasH) {
+        const { srcX, srcY, srcW, srcH } = crop;
+        // Intersect crop with image bounds so we never pass negative source coords to drawImage.
+        const ix1 = Math.max(0, srcX);
+        const iy1 = Math.max(0, srcY);
+        const ix2 = Math.min(image.naturalWidth, srcX + srcW);
+        const iy2 = Math.min(image.naturalHeight, srcY + srcH);
+        if (ix1 >= ix2 || iy1 >= iy2) return;
+        const sx = ix1, sy = iy1;
+        const sw = ix2 - ix1;
+        const sh = iy2 - iy1;
+        const scaleX = canvasW / srcW;
+        const scaleY = canvasH / srcH;
+        const dx = (ix1 - srcX) * scaleX;
+        const dy = (iy1 - srcY) * scaleY;
+        const dw = sw * scaleX;
+        const dh = sh * scaleY;
+        ctx.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
+    }
+
+    function drawFrame(ctx, frame, canvasW, canvasH, bgColor) {
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, canvasW, canvasH);
+        drawCrop(ctx, frame.image, frame.crop, canvasW, canvasH);
+    }
+
     // ----- File handling -----
 
     async function addFiles(fileList) {
@@ -122,19 +259,53 @@
             const url = URL.createObjectURL(file);
             try {
                 const image = await loadImage(url);
+                // Compute output size after this frame is added so aspect reflects new sources.
+                const tempFrames = frames.concat([{ image }]);
+                const aspect = computeAspectFromFrames(tempFrames);
                 frames.push({
                     id: frameIdCounter++,
                     file,
                     url,
                     image,
-                    transform: null,
+                    crop: defaultCoverCrop(image, aspect),
+                    edited: false,
                 });
             } catch (err) {
                 URL.revokeObjectURL(url);
                 console.warn('Failed to load image:', file.name, err);
             }
         }
+
+        // After upload, update aspect tracking and refit any unedited frames if aspect changed.
+        const { width, height } = computeOutputSize();
+        const aspect = width / height;
+        if (lastOutputAspect && Math.abs(aspect - lastOutputAspect) > 0.001) {
+            for (const f of frames) {
+                if (!f.edited) f.crop = defaultCoverCrop(f.image, aspect);
+                else f.crop = adjustCropAspect(f.crop, aspect);
+            }
+        }
+        lastOutputAspect = aspect;
         renderFrames();
+    }
+
+    function computeAspectFromFrames(frameItems) {
+        const mode = sizeInput.value;
+        if (mode === 'custom') {
+            return clamp(parseInt(customW.value, 10) || 600, 32, 2048) /
+                   clamp(parseInt(customH.value, 10) || 600, 32, 2048);
+        }
+        let maxW = 0, maxH = 0;
+        for (const f of frameItems) {
+            if (f.image.naturalWidth > maxW) maxW = f.image.naturalWidth;
+            if (f.image.naturalHeight > maxH) maxH = f.image.naturalHeight;
+        }
+        if (!maxW || !maxH) return 1;
+        if (mode === 'auto') return maxW / maxH;
+        if (mode === 'square') return 1;
+        if (mode === 'landscape') return 16 / 9;
+        if (mode === 'portrait') return 9 / 16;
+        return 1;
     }
 
     function loadImage(src) {
@@ -148,20 +319,37 @@
 
     function renderFrames() {
         frameList.replaceChildren();
+        const { width: outW, height: outH } = computeOutputSize();
+        const bgColor = bgInput.value;
+
         frames.forEach((frame, index) => {
             const item = document.createElement('div');
             item.className = 'frame';
-            if (frame.transform) item.classList.add('frame--edited');
+            if (frame.edited) item.classList.add('frame--edited');
 
-            const img = document.createElement('img');
-            img.src = frame.url;
-            img.alt = `Frame ${index + 1}: ${frame.file.name}`;
-            img.title = 'Click to adjust';
-            img.addEventListener('click', () => openEditor(frame.id));
+            // Render the actual cropped result into a thumbnail canvas so the
+            // user sees exactly what the GIF will contain.
+            const thumb = document.createElement('canvas');
+            const tw = 160;
+            const th = Math.round(tw * outH / outW);
+            thumb.width = tw;
+            thumb.height = th;
+            const tctx = thumb.getContext('2d');
+            tctx.fillStyle = bgColor;
+            tctx.fillRect(0, 0, tw, th);
+            drawCrop(tctx, frame.image, frame.crop, tw, th);
+            thumb.setAttribute('aria-label', `Frame ${index + 1}: ${frame.file.name}`);
 
             const idx = document.createElement('span');
             idx.className = 'frame__index';
             idx.textContent = String(index + 1);
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'frame__edit';
+            editBtn.setAttribute('aria-label', `Adjust frame ${index + 1}`);
+            editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Edit';
+            editBtn.addEventListener('click', () => openEditor(frame.id));
 
             const remove = document.createElement('button');
             remove.type = 'button';
@@ -173,7 +361,7 @@
                 removeFrame(frame.id);
             });
 
-            item.append(img, idx, remove);
+            item.append(thumb, idx, editBtn, remove);
             frameList.append(item);
         });
 
@@ -209,89 +397,6 @@
         clearBtn.disabled = busy;
     }
 
-    // ----- Output sizing -----
-
-    function computeOutputSize() {
-        const mode = sizeInput.value;
-        let width, height;
-
-        if (mode === 'custom') {
-            width = clamp(parseInt(customW.value, 10) || 600, 32, 2048);
-            height = clamp(parseInt(customH.value, 10) || 600, 32, 2048);
-            return { width, height };
-        }
-
-        // base on the largest source dimensions
-        let maxW = 0, maxH = 0;
-        for (const f of frames) {
-            if (f.image.naturalWidth > maxW) maxW = f.image.naturalWidth;
-            if (f.image.naturalHeight > maxH) maxH = f.image.naturalHeight;
-        }
-        if (!maxW || !maxH) { maxW = 600; maxH = 600; }
-
-        if (mode === 'auto') {
-            width = maxW;
-            height = maxH;
-        } else if (mode === 'square') {
-            const side = Math.max(maxW, maxH);
-            width = side; height = side;
-        } else if (mode === 'landscape') {
-            const base = Math.max(maxW, maxH);
-            width = base;
-            height = Math.round(base * 9 / 16);
-        } else if (mode === 'portrait') {
-            const base = Math.max(maxW, maxH);
-            width = Math.round(base * 9 / 16);
-            height = base;
-        }
-
-        // clamp to MAX_OUTPUT preserving aspect ratio
-        if (width > MAX_OUTPUT || height > MAX_OUTPUT) {
-            const scale = MAX_OUTPUT / Math.max(width, height);
-            width = Math.round(width * scale);
-            height = Math.round(height * scale);
-        }
-        // ensure even (some encoders prefer it)
-        width = Math.max(2, width - (width % 2));
-        height = Math.max(2, height - (height % 2));
-        return { width, height };
-    }
-
-    // ----- Frame drawing (used by both editor and final render) -----
-
-    function drawFrame(ctx, frame, canvasW, canvasH, fitMode, bgColor) {
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(0, 0, canvasW, canvasH);
-
-        const img = frame.image;
-        const iw = img.naturalWidth;
-        const ih = img.naturalHeight;
-
-        if (frame.transform) {
-            // custom transform: scale = absolute multiplier on source image
-            const w = iw * frame.transform.scale;
-            const h = ih * frame.transform.scale;
-            const x = (canvasW - w) / 2 + frame.transform.dx;
-            const y = (canvasH - h) / 2 + frame.transform.dy;
-            ctx.drawImage(img, x, y, w, h);
-            return;
-        }
-
-        if (fitMode === 'stretch') {
-            ctx.drawImage(img, 0, 0, canvasW, canvasH);
-            return;
-        }
-
-        const fit = fitMode === 'cover'
-            ? Math.max(canvasW / iw, canvasH / ih)
-            : Math.min(canvasW / iw, canvasH / ih);
-        const w = iw * fit;
-        const h = ih * fit;
-        const x = (canvasW - w) / 2;
-        const y = (canvasH - h) / 2;
-        ctx.drawImage(img, x, y, w, h);
-    }
-
     // ----- Editor modal -----
 
     function openEditor(frameId) {
@@ -303,45 +408,39 @@
         const iw = frame.image.naturalWidth;
         const ih = frame.image.naturalHeight;
 
-        // baseScale = "cover" fit (smallest scale that still covers canvas)
-        const baseScale = Math.max(width / iw, height / ih);
+        // Convert source-rect crop into an interactive (scale, dx, dy) representation.
+        // crop.srcW maps to canvasW, so scale = canvasW / crop.srcW.
+        const scale = width / frame.crop.srcW;
+        // imageOriginX (canvas px) = -crop.srcX * scale
+        // and imageOriginX = (canvasW - iw*scale)/2 + dx, therefore:
+        const dx = -frame.crop.srcX * scale - (width - iw * scale) / 2;
+        const dy = -frame.crop.srcY * scale - (height - ih * scale) / 2;
 
-        let scale, dx, dy;
-        if (frame.transform) {
-            scale = frame.transform.scale;
-            dx = frame.transform.dx;
-            dy = frame.transform.dy;
-        } else {
-            scale = baseScale;
-            dx = 0;
-            dy = 0;
-        }
+        // Cover-fit baseline used for "Reset" and as the slider's reference value.
+        const coverScale = Math.max(width / iw, height / ih);
 
         editorState = {
             canvasW: width,
             canvasH: height,
-            baseScale,
+            iw,
+            ih,
+            coverScale,
             scale,
             dx,
             dy,
-            iw,
-            ih,
             dragging: false,
             lastX: 0,
             lastY: 0,
             displayScale: 1,
         };
 
-        // size canvas to a manageable display size while preserving output aspect
-        sizeEditorCanvas();
-        // sync zoom slider relative to baseScale: range 0.5x..4x
-        zoomInput.min = String((baseScale * 0.5).toFixed(4));
-        zoomInput.max = String((baseScale * 4).toFixed(4));
-        zoomInput.step = String((baseScale / 100).toFixed(4));
-        zoomInput.value = String(scale);
-
         modal.hidden = false;
         document.body.style.overflow = 'hidden';
+        sizeEditorCanvas();
+        zoomInput.min = String((coverScale * 0.5).toFixed(4));
+        zoomInput.max = String((coverScale * 4).toFixed(4));
+        zoomInput.step = String((coverScale / 100).toFixed(4));
+        zoomInput.value = String(scale);
         drawEditor();
     }
 
@@ -359,7 +458,6 @@
         }
         editorCanvas.style.width = `${dispW}px`;
         editorCanvas.style.height = `${dispH}px`;
-        // backing store at output resolution (capped) for crisp preview
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         editorCanvas.width = Math.round(dispW * dpr);
         editorCanvas.height = Math.round(dispH * dpr);
@@ -369,14 +467,13 @@
     function drawEditor() {
         const s = editorState;
         if (!s || !editingFrame) return;
+        const bg = bgInput.value;
 
-        editorCtx.save();
+        editorCtx.setTransform(1, 0, 0, 1, 0, 0);
+        editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
         editorCtx.scale(s.displayScale, s.displayScale);
-        // bg matches what generation would render
-        const fitMode = fitInput.value;
-        const bgColor = fitMode === 'contain' ? bgInput.value : '#ffffff';
 
-        editorCtx.fillStyle = bgColor;
+        editorCtx.fillStyle = bg;
         editorCtx.fillRect(0, 0, s.canvasW, s.canvasH);
 
         const w = s.iw * s.scale;
@@ -385,14 +482,12 @@
         const y = (s.canvasH - h) / 2 + s.dy;
         editorCtx.drawImage(editingFrame.image, x, y, w, h);
 
-        // crop guide outline
-        editorCtx.strokeStyle = 'rgba(91, 108, 255, 0.7)';
+        // Crop guide outline
+        editorCtx.strokeStyle = 'rgba(91, 108, 255, 0.85)';
         editorCtx.lineWidth = 2 / s.displayScale;
         editorCtx.strokeRect(1, 1, s.canvasW - 2, s.canvasH - 2);
-        editorCtx.restore();
     }
 
-    // dragging
     editorCanvas.addEventListener('pointerdown', (e) => {
         if (!editorState) return;
         editorState.dragging = true;
@@ -438,28 +533,32 @@
 
     editorReset.addEventListener('click', () => {
         if (!editorState) return;
-        editorState.scale = editorState.baseScale;
+        editorState.scale = editorState.coverScale;
         editorState.dx = 0;
         editorState.dy = 0;
-        zoomInput.value = String(editorState.baseScale);
+        zoomInput.value = String(editorState.coverScale);
         drawEditor();
     });
 
     editorSave.addEventListener('click', () => {
         if (!editingFrame || !editorState) return;
-        editingFrame.transform = {
-            scale: editorState.scale,
-            dx: editorState.dx,
-            dy: editorState.dy,
+        const s = editorState;
+        // Derive the source rectangle currently mapped to the canvas viewport.
+        const imgOriginX = (s.canvasW - s.iw * s.scale) / 2 + s.dx;
+        const imgOriginY = (s.canvasH - s.ih * s.scale) / 2 + s.dy;
+        editingFrame.crop = {
+            srcX: -imgOriginX / s.scale,
+            srcY: -imgOriginY / s.scale,
+            srcW: s.canvasW / s.scale,
+            srcH: s.canvasH / s.scale,
         };
+        editingFrame.edited = true;
         closeEditor();
         renderFrames();
     });
 
     modal.addEventListener('click', (e) => {
-        if (e.target.dataset && 'close' in e.target.dataset) {
-            closeEditor();
-        }
+        if (e.target.dataset && 'close' in e.target.dataset) closeEditor();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -485,13 +584,15 @@
             showError('GIF encoder failed to load. Please refresh the page.');
             return;
         }
+        if (!GIF_WORKER_URL) {
+            showError('GIF worker source missing. Please refresh the page.');
+            return;
+        }
 
         const delay = clamp(parseInt(delayInput.value, 10) || 200, 20, 60000);
         const quality = clamp(parseInt(qualityInput.value, 10) || 10, 1, 30);
         const repeat = parseInt(loopInput.value, 10);
-        const fitMode = fitInput.value;
-        const bgColor = fitMode === 'contain' ? bgInput.value : '#ffffff';
-
+        const bgColor = bgInput.value;
         const { width, height } = computeOutputSize();
 
         if (lastBlobUrl) {
@@ -519,7 +620,7 @@
         const ctx = canvas.getContext('2d');
 
         for (const frame of frames) {
-            drawFrame(ctx, frame, width, height, fitMode, bgColor);
+            drawFrame(ctx, frame, width, height, bgColor);
             gif.addFrame(ctx, { copy: true, delay });
         }
 
