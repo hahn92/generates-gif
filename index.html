@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIF Generator — Create GIFs from Images</title>
+    <meta name="description" content="A privacy-friendly, 100% client-side GIF generator. Convert your images into animated GIFs without uploading them anywhere.">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="container">
+        <header class="header">
+            <h1>GIF Generator</h1>
+            <p class="subtitle">Turn your images into animated GIFs — entirely in your browser. Nothing is uploaded.</p>
+        </header>
+
+        <section class="card" aria-labelledby="upload-heading">
+            <h2 id="upload-heading">1. Upload Images</h2>
+            <label for="file-input" class="drop-zone" id="drop-zone">
+                <svg class="drop-zone__icon" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span class="drop-zone__text">Click to choose images, or drop them here</span>
+                <span class="drop-zone__hint">PNG, JPG, WEBP, GIF — multiple files supported</span>
+                <input
+                    type="file"
+                    id="file-input"
+                    accept="image/*"
+                    multiple
+                    class="visually-hidden">
+            </label>
+
+            <div id="frame-list" class="frame-list" aria-live="polite" aria-label="Selected frames"></div>
+            <div class="frame-actions" id="frame-actions" hidden>
+                <span id="frame-count" class="frame-count">0 frames</span>
+                <button type="button" id="clear-btn" class="btn btn--ghost">Clear all</button>
+            </div>
+        </section>
+
+        <section class="card" aria-labelledby="config-heading">
+            <h2 id="config-heading">2. Configure</h2>
+            <div class="controls">
+                <div class="control">
+                    <label for="delay-input">Frame delay
+                        <span class="control__hint">(milliseconds per frame)</span>
+                    </label>
+                    <input
+                        type="number"
+                        id="delay-input"
+                        min="20"
+                        max="5000"
+                        step="10"
+                        value="200">
+                </div>
+
+                <div class="control">
+                    <label for="quality-input">Quality
+                        <span class="control__hint">Lower is better, higher is faster</span>
+                    </label>
+                    <div class="range-row">
+                        <input
+                            type="range"
+                            id="quality-input"
+                            min="1"
+                            max="30"
+                            step="1"
+                            value="10">
+                        <output for="quality-input" id="quality-output">10</output>
+                    </div>
+                </div>
+
+                <div class="control">
+                    <label for="loop-input">Repeat</label>
+                    <select id="loop-input">
+                        <option value="0" selected>Loop forever</option>
+                        <option value="1">Play once</option>
+                        <option value="2">Play 2 times</option>
+                        <option value="5">Play 5 times</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <section class="card" aria-labelledby="generate-heading">
+            <h2 id="generate-heading">3. Generate</h2>
+            <button type="button" id="generate-btn" class="btn btn--primary" disabled>
+                Generate GIF
+            </button>
+
+            <div id="status" class="status" hidden role="status" aria-live="polite">
+                <div class="spinner" aria-hidden="true"></div>
+                <div class="status__text">
+                    <span id="status-message">Preparing…</span>
+                    <div class="progress">
+                        <div class="progress__bar" id="progress-bar"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="error" class="error" hidden role="alert"></div>
+
+            <div id="output" class="output" hidden>
+                <h3>Your GIF is ready</h3>
+                <img id="output-preview" alt="Generated animated GIF preview">
+                <div class="output__meta">
+                    <span id="output-size"></span>
+                </div>
+                <a id="download-link" class="btn btn--primary" download="animation.gif">
+                    Download GIF
+                </a>
+            </div>
+        </section>
+
+        <footer class="footer">
+            <p>100% client-side. Your images never leave this browser.</p>
+        </footer>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
