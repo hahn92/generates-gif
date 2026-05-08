@@ -1,7 +1,7 @@
 (() => {
     'use strict';
 
-    const GIF_WORKER_URL = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js';
+    const GIF_WORKER_URL = 'vendor/gif.worker.js';
 
     const fileInput = document.getElementById('file-input');
     const dropZone = document.getElementById('drop-zone');

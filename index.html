@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GIF Generator — Create GIFs from Images</title>
     <meta name="description" content="A privacy-friendly, 100% client-side GIF generator. Convert your images into animated GIFs without uploading them anywhere.">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; base-uri 'self'; form-action 'none'">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -118,7 +119,7 @@
         </footer>
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
+    <script src="vendor/gif.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
