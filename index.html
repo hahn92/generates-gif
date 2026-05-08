@@ -81,6 +81,44 @@
                         <option value="5">Play 5 times</option>
                     </select>
                 </div>
+
+                <div class="control">
+                    <label for="fit-input">Fit mode
+                        <span class="control__hint">How frames fill the canvas</span>
+                    </label>
+                    <select id="fit-input">
+                        <option value="cover" selected>Fill (crop edges)</option>
+                        <option value="contain">Contain (letterbox)</option>
+                        <option value="stretch">Stretch (distort)</option>
+                    </select>
+                </div>
+
+                <div class="control" id="bg-control">
+                    <label for="bg-input">Background
+                        <span class="control__hint">Used by Contain mode</span>
+                    </label>
+                    <input type="color" id="bg-input" value="#ffffff">
+                </div>
+
+                <div class="control">
+                    <label for="size-input">Output size</label>
+                    <select id="size-input">
+                        <option value="auto" selected>Auto (largest source)</option>
+                        <option value="square">Square</option>
+                        <option value="landscape">Landscape (16:9)</option>
+                        <option value="portrait">Portrait (9:16)</option>
+                        <option value="custom">Custom…</option>
+                    </select>
+                </div>
+
+                <div class="control control--inline" id="custom-size-control" hidden>
+                    <label>Width × Height (px)</label>
+                    <div class="size-row">
+                        <input type="number" id="custom-w" min="32" max="2048" step="2" value="600">
+                        <span aria-hidden="true">×</span>
+                        <input type="number" id="custom-h" min="32" max="2048" step="2" value="600">
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -118,6 +156,34 @@
             <p>100% client-side. Your images never leave this browser.</p>
         </footer>
     </main>
+
+    <div class="modal" id="editor-modal" hidden role="dialog" aria-modal="true" aria-labelledby="editor-title">
+        <div class="modal__backdrop" data-close></div>
+        <div class="modal__panel" role="document">
+            <header class="modal__header">
+                <h2 id="editor-title">Adjust frame</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-close>×</button>
+            </header>
+            <div class="modal__body">
+                <div class="editor-stage" id="editor-stage">
+                    <canvas id="editor-canvas" aria-label="Frame preview"></canvas>
+                </div>
+                <div class="editor-controls">
+                    <label for="zoom-input">Zoom
+                        <input type="range" id="zoom-input" min="0.5" max="4" step="0.01" value="1">
+                    </label>
+                    <p class="editor-hint">Drag the image to reposition. Scroll to zoom.</p>
+                </div>
+            </div>
+            <footer class="modal__footer">
+                <button type="button" class="btn btn--ghost" id="editor-reset">Reset</button>
+                <div class="modal__footer-right">
+                    <button type="button" class="btn btn--secondary" data-close>Cancel</button>
+                    <button type="button" class="btn btn--primary btn--compact" id="editor-save">Save</button>
+                </div>
+            </footer>
+        </div>
+    </div>
 
     <script src="vendor/gif.js"></script>
     <script src="script.js"></script>
